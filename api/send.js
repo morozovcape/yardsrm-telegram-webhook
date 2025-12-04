@@ -1,7 +1,7 @@
 // api/send.js — универсальный вебхук
 
 export default async function handler(req, res) {
-  // --- CORS, чтобы формы с любого домена могли слать запросы ---
+  // ----- CORS -----
   res.setHeader('Access-Control-Allow-Origin', '*');
   res.setHeader('Access-Control-Allow-Methods', 'GET,POST,OPTIONS');
   res.setHeader('Access-Control-Allow-Headers', 'Content-Type');
@@ -10,7 +10,7 @@ export default async function handler(req, res) {
     return res.status(200).end();
   }
 
-  const TOKEN = process.env.TELEGRAM_BOT_TOKEN;
+  const TOKEN   = process.env.TELEGRAM_BOT_TOKEN;
   const CHAT_ID = process.env.TELEGRAM_CHAT_ID;
 
   if (!TOKEN || !CHAT_ID) {
@@ -20,15 +20,15 @@ export default async function handler(req, res) {
     });
   }
 
-  // ---------- ЧИТАЕМ ДАННЫЕ ИЗ ЗАПРОСА ----------
+  // ----- ЧИТАЕМ ДАННЫЕ ИЗ ЗАПРОСА -----
   let data = {};
 
   if (req.method === 'POST') {
+    // Если Vercel уже распарсил JSON
     if (req.body && typeof req.body === 'object') {
-      // Tilda / кастомный fetch с JSON
       data = req.body;
     } else if (typeof req.body === 'string') {
-      // form-urlencoded или "сырой" JSON строкой
+      // form-urlencoded или "сырой" JSON
       try {
         data = JSON.parse(req.body);
       } catch {
@@ -36,97 +36,109 @@ export default async function handler(req, res) {
       }
     }
   } else {
-    // GET для тестов: ?name=...
+    // GET — для тестов из браузера
     data = req.query || {};
   }
 
-  // реферер страницы, откуда отправили форму
-  const referer = req.headers.referer || req.headers.origin || '—';
+  // Нормализуем все значения в строки
+  Object.keys(data).forEach((k) => {
+    if (data[k] == null) data[k] = '';
+    data[k] = String(data[k]).trim();
+  });
 
-  // достаём "чем является форма", если ты это передашь
-  const formName =
-    data.form_name ||
-    data.form ||
-    data.tour ||
-    data.source ||
-    'Без названия формы';
+  const {
+    form_name,
+    tour,
+    page,
+    name,
+    phone,
+    email,
+    contact,
+    date,
+    comment,
+  } = data;
 
-  // ---------- СБОР ТЕКСТА ДЛЯ ТЕЛЕГРАМА ----------
+  // ----- СТРОИМ КРАСИВЫЙ ТЕКСТ -----
   const lines = [];
 
-  lines.push('🧭 Новая заявка с сайта');
-  lines.push('');
-  lines.push(`Страница: ${referer}`);
-  lines.push(`Форма / тур: ${formName}`);
-  lines.push('');
+  lines.push('🧭 <b>Новая заявка с сайта</b>');
 
-  // красивое название полей
-  const labels = {
-    name: 'Имя',
-    first_name: 'Имя',
-    last_name: 'Фамилия',
-    phone: 'Телефон',
-    email: 'Email',
-    date: 'Желаемая дата тура',
-    tour: 'Тур',
-    adults: 'Взрослых',
-    kids: 'Детей',
-    people: 'Кол-во человек',
-    guests: 'Гостей',
-    contact: 'Удобный способ связи',
-    comment: 'Комментарий',
-    message: 'Сообщение',
-    budget: 'Бюджет',
-    from: 'Источник',
-    page: 'Страница',
-  };
+  if (page)      lines.push(`Страница: ${page}`);
+  if (form_name) lines.push(`Форма: ${form_name}`);
+  if (tour)      lines.push(`Тур: ${tour}`);
 
-  // Эти поля мы уже вывели отдельно, не дублируем
-  const skipKeys = new Set(['form', 'form_name', 'tour', 'source']);
-
-  for (const [key, rawValue] of Object.entries(data)) {
-    if (rawValue == null || rawValue === '') continue;
-    if (skipKeys.has(key)) continue;
-
-    const label = labels[key] || key;
-    lines.push(`${label}: ${rawValue}`);
+  if (name || phone || email || contact || date || comment) {
+    lines.push('');
   }
 
-  if (lines.length <= 5) {
-    lines.push('Полей нет (проверь форму на сайте)');
+  if (name)    lines.push(`Имя: ${name}`);
+  if (phone)   lines.push(`Телефон: ${phone}`);
+  if (email)   lines.push(`Email: ${email}`);
+  if (contact) lines.push(`Связаться через: ${contact}`);
+  if (date)    lines.push(`Желаемая дата тура: ${date}`);
+
+  if (comment) {
+    lines.push('');
+    lines.push('Комментарий:');
+    lines.push(comment);
   }
 
-  const text = lines.join('\n');
+  // Все дополнительные поля (если появятся в будущих формах)
+  const systemKeys = new Set([
+    'form_name',
+    'tour',
+    'page',
+    'name',
+    'phone',
+    'email',
+    'contact',
+    'date',
+    'comment',
+  ]);
 
-  // ---------- ОТПРАВКА В TELEGRAM ----------
+  const extra = Object.entries(data).filter(
+    ([key, value]) => !systemKeys.has(key) && value !== ''
+  );
+
+  if (extra.length) {
+    lines.push('');
+    lines.push('Дополнительно:');
+    extra.forEach(([key, value]) => {
+      lines.push(`${key}: ${value}`);
+    });
+  }
+
+  const text = lines.join('\n').trim() || 'Новая заявка (пустое сообщение)';
+
+  // ----- ОТПРАВКА В TELEGRAM -----
   try {
-    const tgResponse = await fetch(
-      `https://api.telegram.org/bot${TOKEN}/sendMessage`,
-      {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          chat_id: CHAT_ID,
-          text,
-          parse_mode: 'HTML',
-        }),
-      }
-    );
+    const tgRes = await fetch(`https://api.telegram.org/bot${TOKEN}/sendMessage`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        chat_id: CHAT_ID,
+        text,
+        parse_mode: 'HTML',
+      }),
+    });
 
-    const tgData = await tgResponse.json();
+    const tgData = await tgRes.json();
 
-    if (!tgResponse.ok || !tgData.ok) {
+    if (!tgRes.ok || !tgData.ok) {
       console.error('Telegram error:', tgData);
-      return res
-        .status(500)
-        .json({ ok: false, error: 'Telegram error', detail: tgData });
+      return res.status(500).json({
+        ok: false,
+        error: 'Telegram error',
+        detail: tgData,
+      });
     }
 
     return res.status(200).json({ ok: true });
   } catch (err) {
     console.error('Server error:', err);
-    return res
-      .status(500)
-      .json({ ok: false, error: 'Server error' });
+    return res.status(500).json({
+      ok: false,
+      error: 'Server error',
+    });
   }
 }
