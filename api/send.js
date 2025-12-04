@@ -1,5 +1,5 @@
 export default async function handler(req, res) {
-  const TOKEN = "7548667381:AAEtgXtcA-BSNHfaQIhRjLo5ALQHb_16yqE";
+  const TOKEN = "7548667381:AAHOjvdKq50leOQrE3N_ij6LrbgH3K7o5p0";
   const CHAT_ID = "383561012";
   const data = req.body;
 
